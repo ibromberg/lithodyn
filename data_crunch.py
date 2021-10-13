@@ -30,17 +30,35 @@ lat = [float(i) for i in lat]   # latitude
 long = [float(i) for i in long] # longitutde
 r0 = [float(i) for i in r0]     # elevation
 
+# Lat from 15 - 45
+# Long 70 - 110
+lattrim = []
+longtrim = []
+r0trim = []
+
+for i in range(0,len(lat)):
+    if (lat[i]>=15 and lat[i]<=45 and long[i]>=70 and long[i]<=110):
+        lattrim.append(lat[i])
+        longtrim.append(long[i])
+        r0trim.append(r0[i])
+
+r0 = r0trim
+lat = lattrim
+long = longtrim
+
 # add radius of earth to r0
 r = [(i+R) for i in r0] # elevation plus radius of earth for total radius
 
 # convert to cartesian
-#phi = [(90-i) for i in lat]
-phi = lat
+phi = [(90-i) for i in lat]
 theta = long
 
+
+
+
 # convert degrees to radians?
-#phi = [i*np.pi/180 for i in phi]
-#theta = [i*np.pi/180 for i in phi]
+phi = [i*np.pi/180 for i in phi]
+theta = [i*np.pi/180 for i in phi]
 
 for i in range (0,len(lat)):
     x.append( r[i] * np.sin(phi[i]) * np.cos(theta[i]) )
@@ -48,9 +66,9 @@ for i in range (0,len(lat)):
     z.append( r[i] * np.cos(phi[i]) )
     
 # convert x y z floats back to strings for writing
-x = [str(i) for i in x] # latitude
-y = [str(i) for i in y] # longitutde
-z = [str(i) for i in z] # elevation
+x = [str(i) for i in x] # 
+y = [str(i) for i in y] # 
+z = [str(i) for i in z] # 
 
 newfilename = filename + "_cartesian.txt"
 
