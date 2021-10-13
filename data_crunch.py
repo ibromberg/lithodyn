@@ -1,7 +1,9 @@
 import os # for navigating directories as needed
 import numpy as np
 
-filename = "gtopo1" # without the .xyz extension
+filename = "elevation_17.dat" # without the .xyz extension
+trim = False # set to true to only use a specific range of coordinates
+
 # initiate x y z 
 x = []
 y = []
@@ -9,7 +11,7 @@ z = []
 R = 6.3781e6 # radius of the earth in meters
 
 # open & read file, make each entry in data_all a separate set of data
-with open(filename+".xyz","r") as f:
+with open(filename,"r") as f:
     data_all = f.read()
 data_all = data_all.split('\n\n') 
 
@@ -30,21 +32,30 @@ lat = [float(i) for i in lat]   # latitude
 long = [float(i) for i in long] # longitutde
 r0 = [float(i) for i in r0]     # elevation
 
-# Lat from 15 - 45
-# Long 70 - 110
-lattrim = []
-longtrim = []
-r0trim = []
-
-for i in range(0,len(lat)):
-    if (lat[i]>=15 and lat[i]<=45 and long[i]>=70 and long[i]<=110):
-        lattrim.append(lat[i])
-        longtrim.append(long[i])
-        r0trim.append(r0[i])
-
-r0 = r0trim
-lat = lattrim
-long = longtrim
+if trim==True:
+    # Lat from 15 - 45    
+    latMin = 15
+    latMax = 45
+    
+    # Long 70 - 110
+    longMin = 70
+    longMax = 110
+    
+    # initialize dummy variables
+    lattrim = []
+    longtrim = []
+    r0trim = []
+    
+    for i in range(0,len(lat)):
+        if (lat[i]>=latMin and lat[i]<=latMax and long[i]>=longMin and long[i]<=longMax):
+            lattrim.append(lat[i])
+            longtrim.append(long[i])
+            r0trim.append(r0[i])
+    
+    # move dummy variables to main ones
+    r0 = r0trim
+    lat = lattrim
+    long = longtrim
 
 # add radius of earth to r0
 r = [(i+R) for i in r0] # elevation plus radius of earth for total radius
@@ -53,23 +64,22 @@ r = [(i+R) for i in r0] # elevation plus radius of earth for total radius
 phi = [(90-i) for i in lat]
 theta = long
 
-
-
-
-# convert degrees to radians?
+# convert degrees to radians
 phi = [i*np.pi/180 for i in phi]
 theta = [i*np.pi/180 for i in phi]
 
+# fill x, y, z lists
 for i in range (0,len(lat)):
     x.append( r[i] * np.sin(phi[i]) * np.cos(theta[i]) )
     y.append( r[i] * np.sin(phi[i]) * np.sin(theta[i]) )
     z.append( r[i] * np.cos(phi[i]) )
     
-# convert x y z floats back to strings for writing
+# convert x y z floats back to strings for writing to a file
 x = [str(i) for i in x] # 
 y = [str(i) for i in y] # 
 z = [str(i) for i in z] # 
 
+# create new file and write lists to it
 newfilename = filename + "_cartesian.txt"
 
 with open(newfilename,"w") as f:    
