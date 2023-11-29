@@ -1,0 +1,8 @@
+% core complexes
+% name, long, lat, inferred vergence (degrees)
+Sacramendo -115 35 56
+Harcuvar -113.02 33.9 53
+Harquahalla -112.7 33.8 53
+Buckskin -113.37 34.16 37.2
+Whipple -114.17 34.3 43.4
+Chemehuevi -114.48 34.55 49.9
