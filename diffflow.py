@@ -133,7 +133,8 @@ plt.quiver(theta28,phi28, vLong28, vLat28,color='firebrick',label="28 km BSL Vel
 
 plt.xlim([-122.5,-105])
 plt.ylim([28,42])
-plt.title("Surface & 28km Below Sea Level Flow")
+plt.title("Surface Flow")
+plt.legend()
 
 # add the deformed state lines
 plt.plot(arizona[0],arizona[1], color = "black")
