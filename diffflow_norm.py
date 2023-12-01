@@ -127,22 +127,22 @@ cclat = core['lat']#.values.tolist()
 ccdeg = core['deg']
 
 # -------------------------------------------------------
-# 1 mm/yr = 3.171e-11 m/s
 
 f, ax = plt.subplots(1)
 f.set_size_inches(12, 10)
 
 # surface and 28km bsl velocities
 #plt.tricontourf(theta,phi,r,cmap="gist_earth") # topography
-Q1 = plt.quiver(thetasurf,phisurf, vLongsurf, vLatsurf,color='royalblue',label="Surface Velocity") # surface arrows
-Q2 = plt.quiver(theta28,phi28, vLong28, vLat28,color='firebrick',label="28 km BSL Velocity") # surface arrows
 
-plt.quiverkey(Q1,0.3,0.3,3.171e-11,label="1 mm/yr",coordinates='figure')
-plt.quiverkey(Q2,0.3,0.25,3.171e-11,label="1 mm/yr",coordinates='figure')
+vLongsurf, vLatsurf = norm(vLongsurf,vLatsurf)
+vLong28, vLat28 = norm(vLong28, vLat28)
+plt.quiver(thetasurf,phisurf, vLongsurf, vLatsurf,scale=30,color='royalblue',label="Surface Velocity") # surface arrows
+plt.quiver(theta28,phi28, vLong28, vLat28,scale=30,color='firebrick',label="28 km BSL Velocity") # surface arrows
 
 plt.xlim([-122.5,-105])
 plt.ylim([28,42])
 plt.title("Surface Flow")
+
 
 # add the deformed state lines
 plt.plot(arizona[0],arizona[1], color = "black")
@@ -166,15 +166,14 @@ for i in range(0,len(ccdeg)):
     plt.plot([cclong[i], long_end],[cclat[i],lat_end],color = "indigo",linewidth=3)
 
 plt.legend()
-plt.savefig("poster/surfand28v.png",dpi=300,bbox_inches='tight')
+plt.savefig("poster/surfand28v_norm.png",dpi=300,bbox_inches='tight')
 #plt.show()
 
 # differential velocities ---------------------------------------------
-f, ax = plt.subplots(1)
-f.set_size_inches(12, 10)
+plt.clf()
 
-Q3 = plt.quiver(thetasurf,phisurf, vLongdiff, vLatdiff,color='royalblue',label="Differential Velocity") # surface arrows
-plt.quiverkey(Q3,0.3,0.3,3.171e-11,label="1 mm/yr",coordinates='figure')
+vLongdiff, vLatdiff = norm(vLongdiff,vLatdiff)
+plt.quiver(thetasurf,phisurf, vLongdiff, vLatdiff,scale=30,color='royalblue',label="Differential Velocity") # surface arrows
 
 plt.xlim([-122.5,-105])
 plt.ylim([28,42])
@@ -201,4 +200,4 @@ for i in range(0,len(ccdeg)):
     long_end, lat_end = draw_line(cclat[i],cclong[i],ccdeg[i],1)
     plt.plot([cclong[i], long_end],[cclat[i],lat_end],color = "indigo",linewidth=3)
 
-plt.savefig("poster/diffv.png",dpi=300,bbox_inches='tight')
+plt.savefig("poster/diffv_norm.png",dpi=300,bbox_inches='tight')
