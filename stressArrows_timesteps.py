@@ -13,6 +13,7 @@ takes in 9-component stress tensor and plots principle components
 import numpy as np
 from scipy.linalg import eig
 from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -82,8 +83,41 @@ def tau_cart2sphr(tau_cart, r, theta, phi):
 
         dir_1[ii,:] = [-vecs[0,imax], vecs[1,imax]]
         dir_2[ii,:] = [-vecs[0,imin], vecs[1,imin]]
+        
+        #if j == 1: print(S)
+       # np.dot(eigvecs[:,0], eigvecs[:,1])  # should be ~0
+       # np.dot(eigvecs[:,0], eigvecs[:,2])  # should be ~0
+       # np.dot(eigvecs[:,1], eigvecs[:,2])  # should be ~0
+        rotation = np.array(S_sph[0,1]) - np.array(S_sph[1,0])
+        
+        
+    return sigma_1, sigma_2, dir_1, dir_2, rotation
 
-    return sigma_1, sigma_2, dir_1, dir_2
+def norm(comp_e, comp_n, tens_e, tens_n):
+    mini = min(comp_e.min(), comp_n.min(), tens_e.min(), tens_n.min())
+    maxi = max(comp_e.max(), comp_n.max(), tens_e.max(), tens_n.max())
+    
+    #mini = stacked.min()
+    #maxi = stacked.max()
+    
+    comp_e_n = (comp_e - mini) / (maxi-mini)
+    comp_n_n = (comp_n - mini) / (maxi-mini)
+    tens_e_n = (tens_e - mini) / (maxi-mini)
+    tens_n_n = (tens_n - mini) / (maxi-mini)
+    
+    return comp_e_n, comp_n_n, tens_e_n, tens_n_n
+                        
+
+
+def process(df):
+    x = np.array(df["x"].values.tolist())
+    y = np.array(df["y"].values.tolist())
+    z = np.array(df["z"].values.tolist())
+    
+    theta, phi, r = cart2sph(x, y, z)
+    
+    
+    return theta, phi, r
 
 # ---------------
 
@@ -114,16 +148,28 @@ ccdeg = core['deg']
 
 rEarth = 6371e3
 
+# Read data
+
+path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all.txt'
+path = '/Users/ibromberg/Documents/COMSOL 61/extrusion/text_outputs/fcm5lc21_10bsl_stress.txt'
+savepath = '/Users/ibromberg/Documents/COMSOL 63/stressplots/'
+#path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_17ma_UCLC.txt'
+topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all.txt'
+
+normalize = False
+zoomed = False
+
 # grid variables
 minLong, maxLong = -126, -102 # -126, -101
 minLat, maxLat = 28, 43 # 26, 44
 ddeg = 0.5
 
-# Read data
+if zoomed == True:
+    # core complexs
+    minLong, maxLong = -118, -110
+    minLat, maxLat = 33, 40
+    ddeg = 0.5
 
-path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all.txt'
-savepath = '/Users/ibromberg/Documents/COMSOL 63/stressplots/'
-#path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_17ma_UCLC.txt'
 ma_init = 17.00
 
 # read in dataframe
@@ -142,10 +188,49 @@ for i in range(0,len(df_s)):
                        'eyx', 'eyy', 'eyz',
                        'ezx', 'ezy', 'ezz']
     
-for j in range(0,len(df_s)): #len(df_s)
+        
+# topography dataframe
+df = pd.read_csv(topopath,sep=" ",comment="%",header=None)
+
+# remove redundant xyz that happens when u extract from comsol
+df = df.drop(0, axis=1)
+df = df.drop(1, axis=1)
+df = df.drop(2, axis=1)
+
+df_topos = [df.iloc[:, i:i+3] for i in range(0,df.shape[1], 3)]   
+for i in range(0,len(df_topos)):    
+    df_topos[i].columns = ['x', 'y', 'z']
+
+fin = len(df_s)
+for j in range(0,fin): #len(df_s)
     
     time = ma_init-(j*0.01)
     
+    # topo
+    df_topo = df_topos[j].copy()
+    long_t, lat_t, r_t = process(df_topo)
+    long_t = -long_t
+    r_t = (r_t - rEarth)
+    
+    # get topo on grid for contour plot
+    
+    #clip data if zoomed in for topography
+    if zoomed == True:
+        long_t, lat_t, r_t = zip(*[(x, y, z) for x, y, z in zip(long_t, lat_t, r_t)
+            if x <= maxLong and x >= minLong and y <= maxLat and y >= minLat            
+            ])
+    
+    
+    n = 100 # grid topo    
+    sig = 2
+    # topo grid
+    longi = np.linspace(min(long_t), max(long_t), n)
+    lati = np.linspace(min(lat_t), max(lat_t), n)
+    Long, Lat = np.meshgrid(longi,lati)
+    R = griddata((long_t,lat_t), r_t, (Long,Lat),method='nearest')
+    R = gaussian_filter(R, sigma=sig)
+    
+    # stress
     # split all columns into arrays 
     df = df_s[j].copy()
     x, y, z = df[['x', 'y', 'z']].to_numpy().T
@@ -174,7 +259,7 @@ for j in range(0,len(df_s)): #len(df_s)
     phi = lat
     
     # principal stresses
-    sigma_1, sigma_2, dir_1, dir_2 = tau_cart2sphr(tau_cart, r, theta, phi)
+    sigma_1, sigma_2, dir_1, dir_2, rot = tau_cart2sphr(tau_cart, r, theta, phi)
     sigma_1 /= 1e7
     sigma_2 /= 1e7
     
@@ -207,6 +292,38 @@ for j in range(0,len(df_s)): #len(df_s)
     tens_long = long_all[indT]
     tens_lat = lat_all[indT]
     
+    # double up stresses in opposite directions for plotting T shapes
+    comp_east_opp = -1 * comp_east
+    comp_north_opp = -1 * comp_north    
+    tens_east_opp = -1 * tens_east
+    tens_north_opp = -1 * tens_north
+    
+    comp_long_all = np.vstack((comp_long,comp_long))
+    comp_lat_all  = np.vstack((comp_lat,comp_lat))
+    comp_east_all = np.vstack((comp_east,comp_east_opp))
+    comp_north_all = np.vstack((comp_north,comp_north_opp))
+    
+    tens_long_all = np.vstack((tens_long,tens_long))
+    tens_lat_all  = np.vstack((tens_lat,tens_lat))
+    tens_east_all = np.vstack((tens_east,tens_east_opp))
+    tens_north_all = np.vstack((tens_north,tens_north_opp))
+    
+    
+    # normalized
+    
+    comp_east_n, comp_north_n, tens_east_n, tens_north_n = norm(comp_east, comp_north, tens_east, tens_north)
+
+    comp_east_opp_n = -1 * comp_east_n
+    comp_north_opp_n = -1 * comp_north_n  
+    tens_east_opp_n = -1 * tens_east_n
+    tens_north_opp_n = -1 * tens_north_n
+    
+    comp_east_all_n = np.vstack((comp_east_n,comp_east_opp_n))
+    comp_north_all_n = np.vstack((comp_north_n,comp_north_opp_n))
+    
+    tens_east_all_n = np.vstack((tens_east_n,tens_east_opp_n))
+    tens_north_all_n = np.vstack((tens_north_n,tens_north_opp_n))
+    
     # --------- PLOTTING
     
     fig, ax = plt.subplots()
@@ -232,20 +349,50 @@ for j in range(0,len(df_s)): #len(df_s)
     plt.ylim(minLat,maxLat)
     
     
-    plt.title("Stress at Upper-Lower Crust Boundary " + f"{time:.2f}" + "Ma")
+    plt.title("Stress at -10m " + f"{time:.2f}" + "Ma")
     
     
-    scaling = 100
     
-    Q1 = plt.quiver(comp_long, comp_lat, comp_east, comp_north, color='r',scale=scaling)
-    Q2 = plt.quiver(tens_long, tens_lat, tens_east, tens_north, color='b',scale=scaling)
     
-    qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
-    qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
+    
+    # test arrows; just one in each direction
+    #Q1 = plt.quiver(comp_long, comp_lat, comp_east, comp_north, color='r',scale=scaling)
+    #Q2 = plt.quiver(tens_long, tens_lat, tens_east, tens_north, color='b',scale=scaling)
+    
+    #qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
+    #qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
     
     #plt.legend(['Compressive principle stress','Extensive principle stress'])
     
+    # contour lines
+    lev = [1000, 2000, 3000, 4000]
+    CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=0.7)
+    plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
     
+    
+    if normalize == True:
+        scaling = 40
+        
+        h = 5
+        Q1 = plt.quiver(comp_long_all, comp_lat_all, comp_east_all_n, comp_north_all_n, color='r',scale=scaling,pivot='tip',headwidth=h)
+        Q2 = plt.quiver(tens_long_all, tens_lat_all, tens_east_all_n, tens_north_all_n, color='b',scale=scaling, headwidth=h)
+        
+        #qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
+        #qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
+        
+    else:
+        
+        scaling = 200
+    
+        Q1 = plt.quiver(comp_long_all, comp_lat_all, comp_east_all, comp_north_all, color='r',scale=scaling,pivot='tip')
+        Q2 = plt.quiver(tens_long_all, tens_lat_all, tens_east_all, tens_north_all, color='b',scale=scaling)
+        
+        qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
+        qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
+       
+        lev = [500, 1000, 1500, 2000, 2500, 3000, 3500]
+        CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=1)
+        plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
     
     plt.savefig(savepath + str(j) + " " + f"{time:.2f}" + '.png',dpi=300) #,bbox_inches='tight'
     
