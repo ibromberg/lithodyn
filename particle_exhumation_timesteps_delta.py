@@ -75,13 +75,13 @@ def process(df):
     
     return theta, phi, r
 
-def grid(n, sig, lat, long, r):
-    longi = np.linspace(min(long), max(long), n)
-    lati = np.linspace(min(lat), max(lat), n)
-    
-    Long, Lat = np.meshgrid(longi,lati)
-    
-    R = griddata((long,lat), r, (Long,Lat),method='nearest')
+def grid(lat, long, r, lati, longi, sig):
+    Long, Lat = np.meshgrid(longi, lati)
+
+    R = griddata( (long, lat), r, (Long, Lat), method='linear')
+
+    R_near = griddata((long, lat), r, (Long, Lat), method='nearest')
+    R = np.where(np.isnan(R), R_near, R)
     R = gaussian_filter(R, sigma=sig)
     
     return Lat, Long, R
@@ -105,20 +105,30 @@ core = pd.read_csv('corecomplex.txt', sep=" ", header=None, comment='%',
                    names=['name','long','lat','deg'])
 
 # core complexes
-cclong = core['long']#.values.tolist()
-cclat = core['lat']#.values.tolist()
-ccdeg = core['deg']
+cclong, cclat, ccdeg = core['long'], core['lat'], core['deg']
 
 # ----------------
 
-path = '/Users/ibromberg/Documents/COMSOL 63/particle data/fcm5lc21_allparticles.txt'
-#path = '/Users/ibromberg/Documents/COMSOL 61/variable_LC/fcm3_lc30_particles.txt'
-topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all.txt'
+varyLC = True
 
-savepath = '/Users/ibromberg/Documents/COMSOL 63/plots/particles_anim/exhumation/'
+if varyLC == True:
+    path = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/particles.txt'
+    topopath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/topo.txt'
+    savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/varyLC/'
+else:
+    path = '/Users/ibromberg/Documents/COMSOL 63/particle data/fcm5lc21_allparticles_3ma.txt'
+    topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all_3ma.txt'
+    savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/lc21/'
+
+
+#savepath = '/Users/ibromberg/Documents/COMSOL 63/plots/particles_anim/exhumation/'
+#savepath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/plots/exhumation_2/'
+
+
 zoomed = True # make 'True' if you want it zoomed in on the core complexes
-logscale = False # make 'True' to put the color bar on a log scale
+logscale = True # make 'True' to put the color bar on a log scale
 plotalpha = False # true to make two plots for debugging - plots the change between each frame
+stationary = True # if generating specific frames for plots in papers/writeups
 
 ma_init = 17.00
 timestep = 0.01
@@ -154,30 +164,40 @@ for i in range(0,len(df_topos)):
 # southwest: -110 to -118, below 30 to 37
 # core complexes: -111,-116, 33 to 36
 
-rmin = -20000
-rmax = 0
-longmin = -122
-longmax = -106
-latmin = 28
-latmax = 42
+rmin, rmax = -20000, 0
+longmin, longmax = -122, -106
+latmin, latmax = 28, 42
 
-ccsize = 25
-ccline = 3
-cccolor = 'magenta'
+ccsize, ccline = 25, 3
+cccolor = 'gold'
 
+sig = 1 #smoothing when zoomed out
 
 if zoomed == True:
     # core complexs
-    longmin = -118
-    longmax = -110
-    latmin = 33
-    latmax = 40
-    ccsize = 75
-    ccline = 3
-    #cccolor = 'indigo'
+    longmin, longmax = -118, -110
+    latmin, latmax = 33, 40
+    ccsize, ccline = 85, 3
+    sig = 2
     
 n = 100 # grid topo    initial and final values
-sig = 3
+
+#when zoomed in, sig = 2; corresponds to smoothing over ~2 grid cells to suppress particle-scale noise; 
+# smoothing over ~30–45 km removes particle discreteness & preserves regional gradients and structure
+
+longi = np.linspace(longmin, longmax, n)
+lati  = np.linspace(latmin,  latmax,  n)
+
+if stationary == True: 
+    plt.rcParams.update({'font.size': 28})
+    contourfont = 24
+    ccsize = 200
+else:    
+    plt.rcParams.update({'font.size': 18})
+    contourfont = 16
+
+
+# calculate the initial difference
 
 df_init = df_particle[0].copy() 
 df_topo = df_topos[0].copy()
@@ -201,12 +221,21 @@ lat_init, long_init, r_init = (np.array( df_init["lat"].values.tolist() ),
                                 np.array( df_init["long"].values.tolist() ),
                                 np.array( df_init["r"].values.tolist() ))
 
-topo_lat0, topo_long0, topo_r0 = grid(n, sig, lat_t, long_t, r_t)
-part_lat0, part_long0, part_r0 = grid(n, sig, lat_init, long_init, r_init)
-exhume_0 = topo_r0 - part_r0
+topo_lat0, topo_long0, topo_r0 = grid(lat_t, long_t, r_t, lati, longi, sig)
+part_lat0, part_long0, part_r0 = grid(lat_init, long_init, r_init, lati, longi, sig)
+exhume_0 = topo_r0 - part_r0 # this is alpha_0
+
+
+# LOOP
 
 fin = len(df_particle)-1
-for i in range(0,fin): # len(df_particle)
+
+depth = 0
+
+if stationary == True: start, step = 99, 100
+else: start, step = 9, 10
+
+for i in [9,99,199,299]:#range(start,fin,step): # len(df_particle) #start fin step
      
     df_start = df_particle[i].copy()
     df_topo_start = df_topos[i].copy()
@@ -247,11 +276,11 @@ for i in range(0,fin): # len(df_particle)
     medr = np.median(r_init)
     # print(medr)
       
-    topo_lat_init, topo_long_init, topo_r_init = grid(n, sig, lat_t, long_t, r_t)
-    part_lat_init, part_long_init, part_r_init = grid(n, sig, lat_init, long_init, r_init)
+    topo_lat_init, topo_long_init, topo_r_init = grid(lat_t, long_t, r_t, lati, longi, sig)
+    part_lat_init, part_long_init, part_r_init = grid(lat_init, long_init, r_init, lati, longi, sig)
     
-    topo_lat, topo_long, topo_r = grid(n, sig, lat_t_f, long_t_f, r_t_f)
-    part_lat, part_long, part_r = grid(n, sig, lat_fin, long_fin, r_fin)
+    topo_lat, topo_long, topo_r = grid(lat_t_f, long_t_f, r_t_f, lati, longi, sig)
+    part_lat, part_long, part_r = grid(lat_fin, long_fin, r_fin, lati, longi, sig)
     
     exhume_i = topo_r_init - part_r_init
     exhume_f = topo_r - part_r
@@ -259,17 +288,13 @@ for i in range(0,fin): # len(df_particle)
     alpha = exhume_f - exhume_i
     exhume = exhume_i - exhume_0
     
-    if i==0: depth = abs(medr)/1000
+    # find min and max for color scale checking
+    print(np.max(exhume))
+    print(np.min(exhume))
     
-    # normalize to 6500? try log scale
-        
-    #uncomment this to see how crunchy the particle gridding looks
-    #plt.contourf(LongPf,LatPf,RPf,cmap="gist_earth",levels=50)
-    #plt.title(str(i))
-    #plt.colorbar()
-    #plt.show()
+    if depth==0: depth = abs(medr)/1000
     
-    # initial topo
+    
      # -------------------------------------------------------
     
      # plotting
@@ -318,9 +343,9 @@ for i in range(0,fin): # len(df_particle)
         normalcolor1 = colors.TwoSlopeNorm(vmin=-5000,vcenter=0,vmax=5000) # for linear scale
         #normalcolor = colors.SymLogNorm(linthresh=10, linscale=1, vmin=-5000, vmax=5000, base=10) # for log scale
             
-        ax[0].contourf(part_long,part_lat,exhume,cmap="seismic",levels=30, norm=normalcolor1) #,norm=normalcolor
+        ax[0].contourf(part_long,part_lat,exhume,cmap="seismic_r",levels=30, norm=normalcolor1) #,norm=normalcolor
         
-        sm = ScalarMappable(norm=normalcolor1, cmap='seismic')
+        sm = ScalarMappable(norm=normalcolor1, cmap='seismic_r')
         sm.set_array([])  # Dummy array to satisfy matplotlib
         cbar=plt.colorbar(sm,ax=ax[0],label="Δ(Elevation - Particle Depth) (m)")
         
@@ -347,12 +372,12 @@ for i in range(0,fin): # len(df_particle)
         alphamax = alpha.max()
         alphamin = alpha.min()
         
-        ma_diff = ma_init - i*timestep
+        ma_diff = ma_init - (i+1)*timestep
         ma_diff_2 = ma_diff - timestep
-        ax[0].set_title("Change in Elevation Minus Particle Depth from 17Ma to " + f"{ma_diff:.2f}" + "Ma, \n Average Particle Depth at 17Ma -" + f"{depth:.2f}" + "m ")
+        ax[0].set_title("Change in Elevation Minus Particle Depth from 17Ma to " + f"{ma_diff:.2f}" + "Ma, \n Average Particle Depth at 17Ma -" + f"{depth:.2f}" + "km ")
         ax[1].set_title("Change in Elevation Minus Particle Depth from " + f"{ma_diff:.2f}" + "Ma to " + f"{ma_diff_2:.2f}" + f"\n max: {alphamax:.2f}" + f", min: {alphamin:.2f}")
         
-        plt.savefig(savepath + str(i) + '.png',dpi=300) #,bbox_inches='tight'
+        #plt.savefig(savepath + str(i) + '.png',dpi=300) #,bbox_inches='tight'
         plt.show()
         
         #plt.scatter(part_lat,part_r,c=part_long)
@@ -360,7 +385,7 @@ for i in range(0,fin): # len(df_particle)
         
     else:     
         fig, ax = plt.subplots()
-        fig.set_size_inches(12, 10)
+        fig.set_size_inches(12, 11)
         
          # add the deformed state lines
         a = 0.3
@@ -377,6 +402,8 @@ for i in range(0,fin): # len(df_particle)
         plt.plot(utah[0],utah[1], color = "black", ls = lines, alpha = a)
         plt.plot(wyoming[0],wyoming[1], color = "black", ls = lines, alpha = a)
         
+        
+        
         plt.xlim(longmin,longmax)
         plt.ylim(latmin,latmax)
         plt.xlabel("Longitude")
@@ -385,11 +412,11 @@ for i in range(0,fin): # len(df_particle)
         
         # plot topo minus particle        
         normalcolor = colors.TwoSlopeNorm(vmin=-5000,vcenter=0,vmax=5000) # for linear scale
-        #normalcolor = colors.SymLogNorm(linthresh=10, linscale=1, vmin=-5000, vmax=5000, base=10) # for log scale
+        if logscale == True: normalcolor = colors.SymLogNorm(linthresh=100, linscale=1, vmin=-5000, vmax=5000, base=10) # for log scale
             
-        plt.contourf(part_long,part_lat,exhume,cmap="seismic",levels=30, norm=normalcolor) #,norm=normalcolor
+        plt.contourf(part_long,part_lat,exhume,cmap="RdBu",levels=100, norm=normalcolor) #,norm=normalcolor
         
-        sm = ScalarMappable(norm=normalcolor, cmap='seismic')
+        sm = ScalarMappable(norm=normalcolor, cmap='RdBu')
         sm.set_array([])  # Dummy array to satisfy matplotlib
         cbar=plt.colorbar(sm,ax=ax,label="Δ(Elevation - Particle Depth) (m)")
         
@@ -398,57 +425,34 @@ for i in range(0,fin): # len(df_particle)
         # contour lines
         lev = [500, 1000, 1500, 2000, 2500, 3000, 3500]
         CS = plt.contour(topo_long, topo_lat, topo_r, levels=lev, colors='k',alpha=0.7)
-        plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
+        plt.clabel(CS, inline=True,fontsize=contourfont,fmt='%d m',colors='dimgray')
         
-        ma_diff = ma_init - i*timestep
-        plt.title("Change in Elevation Minus Particle Depth from 17Ma to " + f"{ma_diff:.2f}" + "Ma, \nAverage Particle Depth at 17Ma -" + f"{depth:.2f}" + "m ")
-        
+        ma_diff = ma_init - (i+1)*timestep
+        #plt.title("Change in Elevation Minus Particle Depth from 17Ma to " + f"{ma_diff:.2f}" + "Ma, \nAverage Particle Depth at 17Ma -" + f"{depth:.2f}" + "km ")
+        if stationary==True: plt.title("17Ma to " + f"{ma_diff:.2f}" + "Ma")
+        else:
+            plt.title("Change in Elevation Minus Particle Depth from \n17Ma to " + f"{ma_diff:.2f}" + "Ma\n")
+
         #print(ma_diff, exhume.max(), exhume.min())
         
          # core complexes
          # zoomed in: s=75, linewidth=3
          # zoomed out: s = 25, linewidth = 5
          
-        for j in range(0,len(ccdeg)):
-            #draw_line(cclong[i],cclat[i],ccdeg[i],10)
-            long_end, lat_end = draw_line(cclat[j],cclong[j],ccdeg[j],1)
-            plt.plot([cclong[j], long_end],[cclat[j],lat_end],color = 'k',linewidth=ccline+1.5)
-            plt.plot([cclong[j], long_end],[cclat[j],lat_end],color = cccolor,linewidth=ccline)
+        # for j in range(0,len(ccdeg)):
+        #     #draw_line(cclong[i],cclat[i],ccdeg[i],10)
+        #     long_end, lat_end = draw_line(cclat[j],cclong[j],ccdeg[j],1)
+        #     plt.plot([cclong[j], long_end],[cclat[j],lat_end],color = 'k',linewidth=ccline+1.5)
+        #     plt.plot([cclong[j], long_end],[cclat[j],lat_end],color = cccolor,linewidth=ccline)
         
         plotcc = plt.scatter(cclong,cclat,marker='s',s=ccsize,color=cccolor,label="Core Complexes",edgecolors='k',zorder=10)
             
         plt.legend(loc = 'lower left')     
         
-        plt.savefig(savepath + str(i) + " " + f"{ma_diff:.2f}" + '.png',dpi=300) #,bbox_inches='tight'
+        #plt.savefig(savepath + str(i) + '.png',dpi=300,bbox_inches='tight') #,bbox_inches='tight'
             
         plt.show()
-    
-        """ 
-        # quality checking
-        plt.contourf(LongP,LatP,exhume_i,cmap="seismic",levels=30) #,norm=normalcolor
-        plt.colorbar()
-        plt.title(str(i))
-        plt.show()
+        plt.close()
         
-        plt.contourf(LongPf,LatPf,exhume_f,cmap="seismic",levels=30) #,norm=normalcolor
-        plt.colorbar()
-        plt.title(str(i))
-        plt.show()
-        """
-        """
-        # grid smoothing using cubit but filling in NaNs
-        longi = np.linspace(min(long_t), max(long_t), n)
-        lati = np.linspace(min(lat_t), max(lat_t), n)
-        Long, Lat = np.meshgrid(longi, lati)
         
-        # main interpolation (smooth)
-        R_lin = griddata((long_t, lat_t), r_t, (Long, Lat), method='cubic')
         
-        # fill NaNs using nearest
-        R_near = griddata((long_t, lat_t), r_t, (Long, Lat), method='nearest')
-        R_full = np.where(np.isnan(R_lin), R_near, R_lin)
-        
-        # final smoothing
-        R_smooth = gaussian_filter(R_full, sigma=sig)
-        """
-    

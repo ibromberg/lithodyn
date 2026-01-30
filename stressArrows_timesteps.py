@@ -13,9 +13,11 @@ takes in 9-component stress tensor and plots principle components
 import numpy as np
 from scipy.linalg import eig
 from scipy.interpolate import griddata
+from scipy.interpolate import RBFInterpolator
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import pandas as pd
+
 
 def cart2sph(x, y, z):
     # xyz to lat long r
@@ -33,6 +35,7 @@ def tau_cart2sphr(tau_cart, r, theta, phi):
     n = len(r)
     sigma_1 = np.zeros(n)
     sigma_2 = np.zeros(n)
+    rotation = np.zeros(n)
     dir_1 = np.zeros((n, 2))
     dir_2 = np.zeros((n, 2))
 
@@ -85,12 +88,78 @@ def tau_cart2sphr(tau_cart, r, theta, phi):
         dir_2[ii,:] = [-vecs[0,imin], vecs[1,imin]]
         
         #if j == 1: print(S)
-       # np.dot(eigvecs[:,0], eigvecs[:,1])  # should be ~0
-       # np.dot(eigvecs[:,0], eigvecs[:,2])  # should be ~0
-       # np.dot(eigvecs[:,1], eigvecs[:,2])  # should be ~0
-        rotation = np.array(S_sph[0,1]) - np.array(S_sph[1,0])
+        #np.dot(eigvecs[:,0], eigvecs[:,1])  # should be ~0
+        rotation[ii] = np.array(S_sph[0,1]) - np.array(S_sph[1,0]) * 57.2958
         
-        
+    return sigma_1, sigma_2, dir_1, dir_2, rotation
+
+def tau_cart2sphr_vec(tau_cart, r, theta, phi):
+    """
+    Vectorized version of tau_cart2sphr.
+    Converts 9-component Cartesian stress tensors into spherical coordinates
+    and extracts principal stresses + directions, without Python loops.
+    """
+    # convert angles to radians
+    theta = np.radians(theta)
+    phi   = np.radians(phi)
+
+    sphi,  cphi  = np.sin(phi),  np.cos(phi)
+    stheta, ctheta = np.sin(theta), np.cos(theta)
+
+    n = len(r)
+
+    # Build T1 and T2 for all points (vectorized)
+    # Shape: (n, 3, 3)
+
+    T1 = np.stack([
+        np.stack([sphi*ctheta,  sphi*stheta,  cphi], axis=1),
+        np.stack([cphi*ctheta,  cphi*stheta, -sphi], axis=1),
+        np.stack([-stheta,      ctheta,      np.zeros(n)], axis=1)
+    ], axis=1)
+
+    T2 = np.stack([
+        np.stack([sphi*ctheta,   cphi*ctheta,  -stheta], axis=1),
+        np.stack([sphi*stheta,   cphi*stheta,   ctheta], axis=1),
+        np.stack([cphi,         -sphi,          np.zeros(n)], axis=1)
+    ], axis=1)
+
+    # Stress tensor S_cart: shape (n, 3, 3)
+    S_cart = tau_cart.reshape(-1, 3, 3)
+
+    # S_sph = T1 * S_cart * T2  (vectorized matrix multiplication)
+    S_sph = T1 @ S_cart @ T2     # shape (n, 3, 3)
+
+    # Extract the 2×2 theta-phi plane for each tensor
+    # Equivalent to S = S_sph[1:, 1:], but vectorized
+    S_sub = S_sph[:, 1:, 1:]     # shape (n, 2, 2)
+
+    # Solve eigenvalues/eigenvectors for all 2×2 tensors
+    # SciPy eig does not vectorize; NumPy eig does.
+    vals, vecs = np.linalg.eig(S_sub)  # vals shape (n,2), vecs shape (n,2,2)
+
+    # principal stresses
+    sigma_1 = np.max(vals, axis=1)
+    sigma_2 = np.min(vals, axis=1)
+
+    # indices
+    i1 = np.argmax(vals, axis=1)
+    i2 = np.argmin(vals, axis=1)
+
+    # directions: for 2×2 matrix, vecs[n,:,i] is eigenvector
+    # Extract directions using fancy indexing:
+    dir_1 = np.stack([
+        -vecs[np.arange(n), 0, i1],
+         vecs[np.arange(n), 1, i1]
+    ], axis=1)
+
+    dir_2 = np.stack([
+        -vecs[np.arange(n), 0, i2],
+         vecs[np.arange(n), 1, i2]
+    ], axis=1)
+
+    # rotation = antisymmetric part of S_sph
+    rotation = S_sph[:,0,1] - S_sph[:,1,0]
+
     return sigma_1, sigma_2, dir_1, dir_2, rotation
 
 def norm(comp_e, comp_n, tens_e, tens_n):
@@ -150,27 +219,66 @@ rEarth = 6371e3
 
 # Read data
 
-path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all.txt'
-path = '/Users/ibromberg/Documents/COMSOL 61/extrusion/text_outputs/fcm5lc21_10bsl_stress.txt'
-savepath = '/Users/ibromberg/Documents/COMSOL 63/stressplots/'
+varyLC = True
+
+if varyLC == True:
+    path = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/stress.txt'
+    topopath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/topo.txt'
+    savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/varyLC/'
+else:
+    path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all_3ma_noNaN.txt' # this is LC 21
+    topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all_3ma.txt'
+    savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/lc21/'
+
+#path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all.txt'
 #path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_17ma_UCLC.txt'
-topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all.txt'
+#path = '/Users/ibromberg/Documents/COMSOL 61/extrusion/text_outputs/fcm5lc21_10bsl_stress.txt'
+
+#savepath = '/Users/ibromberg/Documents/COMSOL 63/stressplots/'
+#savepath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/plots/stress10bsl_2/'
+#savepath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/plots/stress_zoom/'
+
+
 
 normalize = False
 zoomed = False
+stationary = True
 
 # grid variables
 minLong, maxLong = -126, -102 # -126, -101
 minLat, maxLat = 28, 43 # 26, 44
-ddeg = 0.5
+ddeg = 0.5 # how often per degree to grid
+ccsize = 40 # size of core complex squares
+hw = 5 # headwidth of arrows
+w = 0.003
 
 if zoomed == True:
     # core complexs
     minLong, maxLong = -118, -110
     minLat, maxLat = 33, 40
     ddeg = 0.5
+    ccsize = 85
+    hw = 9 #headwidth of arrows
+    w = 0.005
 
 ma_init = 17.00
+
+if stationary == True: 
+    plt.rcParams.update({'font.size': 22})
+    contourfont = 22
+    ccsize = 150
+else:    
+    plt.rcParams.update({'font.size': 18})
+    contourfont = 16
+
+# read in core complex data
+core = pd.read_csv('corecomplex.txt', sep=" ", header=None, comment='%', 
+                   names=['name','long','lat','deg'])
+
+# core complexes
+cclong = core['long']#.values.tolist()
+cclat = core['lat']#.values.tolist()
+ccdeg = core['deg']
 
 # read in dataframe
 dfs = pd.read_csv(path,sep=" ",comment='%',header=None)
@@ -202,7 +310,8 @@ for i in range(0,len(df_topos)):
     df_topos[i].columns = ['x', 'y', 'z']
 
 fin = len(df_s)
-for j in range(0,fin): #len(df_s)
+step = 100 # 10 for more slides, 100 for stationary plots
+for j in range(0,fin,step): #len(df_s) 
     
     time = ma_init-(j*0.01)
     
@@ -222,12 +331,16 @@ for j in range(0,fin): #len(df_s)
     
     
     n = 100 # grid topo    
-    sig = 2
+    sig = 1.5
     # topo grid
     longi = np.linspace(min(long_t), max(long_t), n)
     lati = np.linspace(min(lat_t), max(lat_t), n)
     Long, Lat = np.meshgrid(longi,lati)
-    R = griddata((long_t,lat_t), r_t, (Long,Lat),method='nearest')
+    #R = griddata((long_t,lat_t), r_t, (Long,Lat),method='linear')
+    #R = gaussian_filter(R, sigma=sig)
+    
+    rbf = RBFInterpolator(np.column_stack((long_t,lat_t)), r_t, kernel='thin_plate_spline')
+    R = rbf(np.column_stack((Long.ravel(),Lat.ravel()))).reshape(Long.shape)
     R = gaussian_filter(R, sigma=sig)
     
     # stress
@@ -309,6 +422,29 @@ for j in range(0,fin): #len(df_s)
     tens_north_all = np.vstack((tens_north,tens_north_opp))
     
     
+    #### color map: comment out; for magnitude estimations ############3
+    #absolute principal stresses
+    # mag1 = np.abs(m_sigma_1)
+    # mag2 = np.abs(m_sigma_2)
+    
+    # # maximum principal stress magnitude
+    # mag_max = np.maximum(np.abs(m_sigma_1), np.abs(m_sigma_2))
+    
+    # # signed (compression negative, tension positive)
+    # mag_signed = m_sigma_1   # or m_sigma_2
+    
+    # fig, ax = plt.subplots(figsize=(8,6))
+
+    # c = ax.contourf(mlong, mlat, mag_max, cmap='viridis', extend='both')
+    
+    # cb = plt.colorbar(c, ax=ax)
+    # cb.set_label('Principal stress magnitude (×10⁷ Pa)')
+    
+    # ax.set_xlabel('Longitude')
+    # ax.set_ylabel('Latitude')
+    # ax.set_title('Maximum principal stress magnitude')
+    # plt.show()
+    ###########################################
     # normalized
     
     comp_east_n, comp_north_n, tens_east_n, tens_north_n = norm(comp_east, comp_north, tens_east, tens_north)
@@ -349,13 +485,15 @@ for j in range(0,fin): #len(df_s)
     plt.ylim(minLat,maxLat)
     
     
-    plt.title("Stress at -10m " + f"{time:.2f}" + "Ma")
+    if stationary == True & zoomed == True: plt.title(f"{time:.2f}" + "Ma",loc='left')
+    elif stationary == True & zoomed == False: plt.title(f"{time:.2f}" + "Ma")
+    else: plt.title("Stress at -10m: " + f"{time:.2f}" + "Ma")
+    
+    plotcc = plt.scatter(cclong,cclat,marker='s',s=ccsize,color='gold',label="Core Complexes",edgecolors='k',zorder=10)
+    plt.legend(loc = 'lower left')
     
     
-    
-    
-    
-    # test arrows; just one in each direction
+    # test arrows; just one in each direction ###############
     #Q1 = plt.quiver(comp_long, comp_lat, comp_east, comp_north, color='r',scale=scaling)
     #Q2 = plt.quiver(tens_long, tens_lat, tens_east, tens_north, color='b',scale=scaling)
     
@@ -365,36 +503,40 @@ for j in range(0,fin): #len(df_s)
     #plt.legend(['Compressive principle stress','Extensive principle stress'])
     
     # contour lines
-    lev = [1000, 2000, 3000, 4000]
-    CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=0.7)
-    plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
+    #lev = [1000, 2000, 3000, 4000]
+    #CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=0.7)
+    
+    #plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
+    ##################
+
+    if zoomed == True: scaling=75
+    else: scaling = 125
+
+    Q1 = plt.quiver(comp_long_all, comp_lat_all, comp_east_all, comp_north_all, color='b',pivot='tip', scale=scaling,width=w) #headwidth=hw,width=w
+    Q2 = plt.quiver(tens_long_all, tens_lat_all, tens_east_all, tens_north_all, color='r', scale=scaling,width=w)
     
     
-    if normalize == True:
-        scaling = 40
+    if zoomed == True:
+        qk = ax.quiverkey(Q2, X=0.52, Y=1.03, U=5, label='       50 MPa Principal Stress',labelpos='E',color='k', zorder=100) 
+        qk = ax.quiverkey(Q2, X=0.52, Y=1.03, U=-5, label='',labelpos='E',color='k', zorder=100) 
+        plt.legend(loc='upper right')
+    else:        
+        qk = ax.quiverkey(Q2, X=0.055, Y=0.11, U=5, label='     50 MPa Principal Stress',labelpos='E',color='k', zorder=100) 
+        qk = ax.quiverkey(Q2, X=0.056, Y=0.11, U=-5, label='',labelpos='E',color='k', zorder=100) 
+
         
-        h = 5
-        Q1 = plt.quiver(comp_long_all, comp_lat_all, comp_east_all_n, comp_north_all_n, color='r',scale=scaling,pivot='tip',headwidth=h)
-        Q2 = plt.quiver(tens_long_all, tens_lat_all, tens_east_all_n, tens_north_all_n, color='b',scale=scaling, headwidth=h)
-        
-        #qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
-        #qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
-        
-    else:
-        
-        scaling = 200
+    lev = [500, 1000, 1500, 2000, 2500, 3000, 3500]
+    CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=1)
     
-        Q1 = plt.quiver(comp_long_all, comp_lat_all, comp_east_all, comp_north_all, color='r',scale=scaling,pivot='tip')
-        Q2 = plt.quiver(tens_long_all, tens_lat_all, tens_east_all, tens_north_all, color='b',scale=scaling)
-        
-        qk = ax.quiverkey(Q1, X=0.2, Y=0.1, U=5, label='5 Pa, Compressive principle stress',labelpos='N') # horizontal displacement key
-        qk = ax.quiverkey(Q2, X=0.2, Y=0.05, U=5, label='5 Pa, Extensive principle stress',labelpos='N') # horizontal displacement key
-       
-        lev = [500, 1000, 1500, 2000, 2500, 3000, 3500]
-        CS = plt.contour(Long, Lat, R, levels=lev, colors='k',alpha=1)
-        plt.clabel(CS, inline=True,fontsize=16,fmt='%d m')
+    #xs = np.linspace(Long.min(), Long.max(), 5)
+    #ys = np.linspace(Lat.min(), Lat.max(), 5)
+    #positions = [(x, y) for x in xs for y in ys]
+    #manual=positions,
     
-    plt.savefig(savepath + str(j) + " " + f"{time:.2f}" + '.png',dpi=300) #,bbox_inches='tight'
+    plt.clabel(CS, inline=True,fontsize=contourfont,fmt='%d m',colors='dimgray')
+        
+
+    plt.savefig(savepath + str(j) + " " + f"{time:.2f}" + '.png',dpi=300,bbox_inches='tight') #
     
     plt.show()
     
