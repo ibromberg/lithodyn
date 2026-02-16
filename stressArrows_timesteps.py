@@ -7,6 +7,15 @@ Created on Tue Nov 11 16:04:18 2025
 
 converted from Sarah Bischoff/Chris Calvelage matlab code
 
+comsol file output: x y z 
+                    spf.K_stress_tensorxx spf.K_stress_tensorxy spf.K_stress_tensorxz
+                    spf.K_stress_tensoryx spf.K_stress_tensoryy spf.K_stress_tensoryz
+                    spf.K_stress_tensorzx spf.K_stress_tensorzy spf.K_stress_tensorzz
+                    
+                    all time steps
+                    exclude NaNs if needed
+                    separator = space
+
 takes in 9-component stress tensor and plots principle components
 """
 
@@ -93,23 +102,18 @@ def tau_cart2sphr(tau_cart, r, theta, phi):
         
     return sigma_1, sigma_2, dir_1, dir_2, rotation
 
-def tau_cart2sphr_vec(tau_cart, r, theta, phi):
+def stress_cart2sph_subgrid(tau_cart, theta, phi):
     """
-    Vectorized version of tau_cart2sphr.
-    Converts 9-component Cartesian stress tensors into spherical coordinates
-    and extracts principal stresses + directions, without Python loops.
+    Convert Cartesian stress tensors to spherical coordinates.
+    Returns the 2×2 theta-phi submatrix at each data point.
     """
-    # convert angles to radians
     theta = np.radians(theta)
     phi   = np.radians(phi)
 
     sphi,  cphi  = np.sin(phi),  np.cos(phi)
     stheta, ctheta = np.sin(theta), np.cos(theta)
 
-    n = len(r)
-
-    # Build T1 and T2 for all points (vectorized)
-    # Shape: (n, 3, 3)
+    n = len(theta)
 
     T1 = np.stack([
         np.stack([sphi*ctheta,  sphi*stheta,  cphi], axis=1),
@@ -123,44 +127,17 @@ def tau_cart2sphr_vec(tau_cart, r, theta, phi):
         np.stack([cphi,         -sphi,          np.zeros(n)], axis=1)
     ], axis=1)
 
-    # Stress tensor S_cart: shape (n, 3, 3)
     S_cart = tau_cart.reshape(-1, 3, 3)
 
-    # S_sph = T1 * S_cart * T2  (vectorized matrix multiplication)
-    S_sph = T1 @ S_cart @ T2     # shape (n, 3, 3)
+    S_sph = T1 @ S_cart @ T2
 
-    # Extract the 2×2 theta-phi plane for each tensor
-    # Equivalent to S = S_sph[1:, 1:], but vectorized
-    S_sub = S_sph[:, 1:, 1:]     # shape (n, 2, 2)
+    # extract theta-phi block
+    S_sub = S_sph[:, 1:, 1:]
 
-    # Solve eigenvalues/eigenvectors for all 2×2 tensors
-    # SciPy eig does not vectorize; NumPy eig does.
-    vals, vecs = np.linalg.eig(S_sub)  # vals shape (n,2), vecs shape (n,2,2)
+    # enforce symmetry (important)
+    S_sub = 0.5 * (S_sub + np.transpose(S_sub, (0,2,1)))
 
-    # principal stresses
-    sigma_1 = np.max(vals, axis=1)
-    sigma_2 = np.min(vals, axis=1)
-
-    # indices
-    i1 = np.argmax(vals, axis=1)
-    i2 = np.argmin(vals, axis=1)
-
-    # directions: for 2×2 matrix, vecs[n,:,i] is eigenvector
-    # Extract directions using fancy indexing:
-    dir_1 = np.stack([
-        -vecs[np.arange(n), 0, i1],
-         vecs[np.arange(n), 1, i1]
-    ], axis=1)
-
-    dir_2 = np.stack([
-        -vecs[np.arange(n), 0, i2],
-         vecs[np.arange(n), 1, i2]
-    ], axis=1)
-
-    # rotation = antisymmetric part of S_sph
-    rotation = S_sph[:,0,1] - S_sph[:,1,0]
-
-    return sigma_1, sigma_2, dir_1, dir_2, rotation
+    return S_sub
 
 def norm(comp_e, comp_n, tens_e, tens_n):
     mini = min(comp_e.min(), comp_n.min(), tens_e.min(), tens_n.min())
@@ -176,7 +153,6 @@ def norm(comp_e, comp_n, tens_e, tens_n):
     
     return comp_e_n, comp_n_n, tens_e_n, tens_n_n
                         
-
 
 def process(df):
     x = np.array(df["x"].values.tolist())
@@ -219,15 +195,22 @@ rEarth = 6371e3
 
 # Read data
 
-varyLC = True
+varyLC = False
+save = False
+normalize = False
+zoomed = True
+stationary = True
+plotmag = True
 
 if varyLC == True:
     path = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/stress.txt'
     topopath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/modelout/topo.txt'
     savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/varyLC/'
 else:
-    path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all_3ma_noNaN.txt' # this is LC 21
-    topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all_3ma.txt'
+    #path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all_3ma_noNaN.txt' # this is LC 21
+    path = '/Users/ibromberg/Documents/COMSOL 63/strain/fcm5lc21_10bsl_stress.txt'
+    #topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all_3ma.txt'
+    topopath = '/Users/ibromberg/Documents/COMSOL 63/topodata/fcm5lc21_topo_all_LC12.txt'
     savepath = '/Users/ibromberg/Documents/COMSOL 63/prelim/lc21/'
 
 #path = '/Users/ibromberg/Documents/COMSOL 63/strain/stress_all.txt'
@@ -237,12 +220,6 @@ else:
 #savepath = '/Users/ibromberg/Documents/COMSOL 63/stressplots/'
 #savepath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/plots/stress10bsl_2/'
 #savepath = '/Users/ibromberg/Documents/COMSOL 63/agu2025/plots/stress_zoom/'
-
-
-
-normalize = False
-zoomed = False
-stationary = True
 
 # grid variables
 minLong, maxLong = -126, -102 # -126, -101
@@ -263,13 +240,14 @@ if zoomed == True:
 
 ma_init = 17.00
 
-if stationary == True: 
-    plt.rcParams.update({'font.size': 22})
-    contourfont = 22
-    ccsize = 150
+plt.rcParams.update({'font.size': 22})
+contourfont = 22
+ccsize = 125
+
+if stationary == True:     
+    step = 100
 else:    
-    plt.rcParams.update({'font.size': 18})
-    contourfont = 16
+    step = 10
 
 # read in core complex data
 core = pd.read_csv('corecomplex.txt', sep=" ", header=None, comment='%', 
@@ -310,7 +288,7 @@ for i in range(0,len(df_topos)):
     df_topos[i].columns = ['x', 'y', 'z']
 
 fin = len(df_s)
-step = 100 # 10 for more slides, 100 for stationary plots
+#step = 100 # 10 for more slides, 100 for stationary plots
 for j in range(0,fin,step): #len(df_s) 
     
     time = ma_init-(j*0.01)
@@ -371,24 +349,64 @@ for j in range(0,fin,step): #len(df_s)
     theta = long
     phi = lat
     
-    # principal stresses
-    sigma_1, sigma_2, dir_1, dir_2, rot = tau_cart2sphr(tau_cart, r, theta, phi)
+    # Convert to spherical and get 2×2 tensor
+    S_sub = stress_cart2sph_subgrid(tau_cart, long, lat)
+    
+    # Extract components
+    S_tt = S_sub[:,0,0]
+    S_tp = S_sub[:,0,1]
+    S_pp = S_sub[:,1,1]
+    
+    points = np.column_stack((long, lat))
+    
+    # Interpolate tensor components
+    m_S_tt = griddata(points, S_tt, (mlong, mlat), method='linear')
+    m_S_tp = griddata(points, S_tp, (mlong, mlat), method='linear')
+    m_S_pp = griddata(points, S_pp, (mlong, mlat), method='linear')
+
+    n1, n2 = mlong.shape
+
+    sigma_1 = np.zeros_like(m_S_tt)
+    sigma_2 = np.zeros_like(m_S_tt)
+    
+    dir_1north = np.zeros_like(m_S_tt)
+    dir_1east  = np.zeros_like(m_S_tt)
+    dir_2north = np.zeros_like(m_S_tt)
+    dir_2east  = np.zeros_like(m_S_tt)
+    
+    for i in range(n1):
+        for k in range(n2):
+    
+            if np.isnan(m_S_tt[i,k]):
+                continue
+    
+            S = np.array([
+                [m_S_tt[i,k], m_S_tp[i,k]],
+                [m_S_tp[i,k], m_S_pp[i,k]]
+            ])
+    
+            vals, vecs = np.linalg.eigh(S)  # eigh guarantees orthogonal eigenvectors
+    
+            i1 = np.argmax(vals)
+            i2 = np.argmin(vals)
+    
+            sigma_1[i,k] = vals[i1]
+            sigma_2[i,k] = vals[i2]
+    
+            dir_1north[i,k] = -vecs[0,i1]
+            dir_1east[i,k]  =  vecs[1,i1]
+    
+            dir_2north[i,k] = -vecs[0,i2]
+            dir_2east[i,k]  =  vecs[1,i2]
+
+    
+    # scale stresses
     sigma_1 /= 1e7
     sigma_2 /= 1e7
-    
-    # interpolation (scatteredInterpolant in matlab, griddata here)
-    points = np.column_stack((long, lat))
-    m_sigma_1 = griddata(points, sigma_1, (mlong, mlat), method='linear')
-    m_dir_1north = griddata(points, dir_1[:,0], (mlong, mlat), method='linear')
-    m_dir_1east = griddata(points, dir_1[:,1], (mlong, mlat), method='linear')
-    m_sigma_2 = griddata(points, sigma_2, (mlong, mlat), method='linear')
-    m_dir_2north = griddata(points, dir_2[:,0], (mlong, mlat), method='linear')
-    m_dir_2east = griddata(points, dir_2[:,1], (mlong, mlat), method='linear')
-    
-    # separate compressive vs tensile stresses
-    sigma = np.concatenate([m_sigma_1.ravel(), m_sigma_2.ravel()])
-    dir_north = np.concatenate([m_dir_1north.ravel(), m_dir_2north.ravel()])
-    dir_east = np.concatenate([m_dir_1east.ravel(), m_dir_2east.ravel()])
+    # separate compressive vs tensile stresses - flatten
+    sigma = np.concatenate([sigma_1.ravel(), sigma_2.ravel()])
+    dir_north = np.concatenate([dir_1north.ravel(), dir_2north.ravel()])
+    dir_east = np.concatenate([dir_1east.ravel(), dir_2east.ravel()])
     long_all = np.concatenate([mlong.ravel(), mlong.ravel()])
     lat_all = np.concatenate([mlat.ravel(), mlat.ravel()])
     
@@ -422,28 +440,33 @@ for j in range(0,fin,step): #len(df_s)
     tens_north_all = np.vstack((tens_north,tens_north_opp))
     
     
-    #### color map: comment out; for magnitude estimations ############3
+    #### color map magnitude ############3
     #absolute principal stresses
-    # mag1 = np.abs(m_sigma_1)
-    # mag2 = np.abs(m_sigma_2)
+    if plotmag==True:
+        mag1 = np.abs(sigma_1)
+        mag2 = np.abs(sigma_2)
+        
+        # maximum principal stress magnitude
+        mag_max = np.maximum(np.abs(sigma_1), np.abs(sigma_2))
+        
+        # signed (compression negative, tension positive)
+        mag_signed = sigma_1   # or m_sigma_2
+        
+        fig, ax = plt.subplots(figsize=(8,6))
     
-    # # maximum principal stress magnitude
-    # mag_max = np.maximum(np.abs(m_sigma_1), np.abs(m_sigma_2))
-    
-    # # signed (compression negative, tension positive)
-    # mag_signed = m_sigma_1   # or m_sigma_2
-    
-    # fig, ax = plt.subplots(figsize=(8,6))
-
-    # c = ax.contourf(mlong, mlat, mag_max, cmap='viridis', extend='both')
-    
-    # cb = plt.colorbar(c, ax=ax)
-    # cb.set_label('Principal stress magnitude (×10⁷ Pa)')
-    
-    # ax.set_xlabel('Longitude')
-    # ax.set_ylabel('Latitude')
-    # ax.set_title('Maximum principal stress magnitude')
-    # plt.show()
+        c = ax.contourf(mlong, mlat, mag_max, cmap='viridis', extend='both',levels=np.linspace(0,2,10))
+        
+        cb = plt.colorbar(c, ax=ax)
+        cb.set_label('Principal stress mag (x10^7 Pa)')
+        
+        plotcc = plt.scatter(cclong,cclat,marker='s',s=ccsize,color='gold',label="Core Complexes",edgecolors='k',zorder=10)
+        
+        ax.set_xlim(minLong,maxLong)
+        ax.set_ylim(minLat,maxLat)
+        ax.set_xlabel('Longitude')
+        ax.set_ylabel('Latitude')
+        ax.set_title('Maximum principal stress magnitude')
+        plt.show()
     ###########################################
     # normalized
     
@@ -535,8 +558,8 @@ for j in range(0,fin,step): #len(df_s)
     
     plt.clabel(CS, inline=True,fontsize=contourfont,fmt='%d m',colors='dimgray')
         
-
-    plt.savefig(savepath + str(j) + " " + f"{time:.2f}" + '.png',dpi=300,bbox_inches='tight') #
+    if save == True:
+        plt.savefig(savepath + str(j) + " " + f"{time:.2f}" + '.png',dpi=300,bbox_inches='tight') #
     
     plt.show()
     
